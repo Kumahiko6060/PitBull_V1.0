@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Alignment</title>
+<link rel="apple-touch-icon" sizes="180x180" href="/icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Alignment">
+<link rel="manifest" href="/manifest.json">
+<style>
+  :root {
+    --bg: #060707;
+    --panel: rgba(14, 16, 17, 0.92);
+    --line: rgba(255, 255, 255, 0.09);
+    --line-strong: rgba(255, 255, 255, 0.18);
+    --text: #f2f3f2;
+    --text-dim: #71787a;
+    --amber: #ff9d1f;
+    --cyan: #2fd8d1;
+    --magenta: #ff3d7f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background:
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 100% 34px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 34px 100%,
+      repeating-linear-gradient(115deg, rgba(47,216,209,0.05) 0 3px, transparent 3px 46px, rgba(255,61,127,0.05) 46px 49px, transparent 49px 92px),
+      var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Helvetica Neue", Arial, sans-serif;
+    overscroll-behavior: none; user-select: none;
+    display: flex; flex-direction: column;
+  }
+  .num { font-family: "SF Mono", "Menlo", monospace; font-variant-numeric: tabular-nums; }
+
+  .status {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 10px 16px; font-size: 11px; color: var(--text-dim);
+    letter-spacing: 0.12em; text-transform: uppercase;
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  .dot { width: 6px; height: 6px; background: #444; display: inline-block; margin-right: 6px; }
+  .dot.connected { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
+
+  .stage {
+    position: relative;
+    flex: 1 1 auto; min-height: 0;
+    padding: 10px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .logstrip {
+    flex: 0 0 auto; height: 64px;
+    border-top: 1px solid var(--line);
+    background: rgba(0,0,0,0.4);
+    overflow-y: auto;
+    padding: 4px 12px;
+    font-family: "SF Mono", "Menlo", monospace;
+    font-size: 10px; line-height: 1.6;
+    color: var(--text-dim);
+  }
+  .logstrip .entry { white-space: nowrap; }
+  .logstrip .t { color: rgba(255,255,255,0.3); margin-right: 6px; }
+  .logstrip .tag-conn { color: var(--amber); }
+  .logstrip .tag-sel { color: var(--cyan); }
+  .logstrip .tag-off { color: var(--magenta); }
+  .logstrip .tag-gas { color: #7CFF6B; }
+  .logstrip .tag-gaserr { color: #ff5c5c; }
+
+  .corner {
+    background: var(--panel); border: 1px solid var(--line-strong);
+    border-top-width: 3px;
+    padding: 10px 14px 8px;
+    display: flex; flex-direction: column; justify-content: flex-start;
+  }
+  .corner.front { border-top-color: var(--cyan); }
+  .corner.rear { border-top-color: var(--magenta); }
+  .corner.front .corner-label span:first-child { color: var(--cyan); }
+  .corner.rear .corner-label span:first-child { color: var(--magenta); }
+  #cornerFL { clip-path: polygon(0 0, 100% 0, 100% 100%, 18px 100%, 0 calc(100% - 18px)); }
+  #cornerFR { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 18px), calc(100% - 18px) 100%, 0 100%); }
+  #cornerRL { clip-path: polygon(18px 0, 100% 0, 100% 100%, 0 100%, 0 18px); }
+  #cornerRR { clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%); }
+  .corner.active { border-color: var(--amber); border-top-color: var(--amber); }
+  .corner.active .corner-label span:first-child { color: var(--amber); }
+
+  .corner-label {
+    font-size: 11px; color: var(--text-dim); letter-spacing: 0.14em;
+    display: flex; justify-content: space-between; align-items: center;
+    padding-bottom: 4px; margin-bottom: 5px; border-bottom: 1px solid var(--line);
+  }
+  .corner.active .corner-label { color: var(--amber); border-color: rgba(255,157,31,0.3); }
+  .live-tag {
+    font-size: 9px; color: var(--amber); letter-spacing: 0.1em;
+    opacity: 0; transition: opacity .15s;
+  }
+  .live-tag::before { content: "● "; }
+  .corner.active .live-tag { opacity: 1; }
+
+  .trend-row { margin-top: 6px; }
+  .trend-row .k { font-size: 10px; color: var(--text-dim); letter-spacing: 0.08em; }
+  .trend-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .live-val { font-size: 13px; color: var(--text); font-weight: 600; margin-left: 5px; }
+  .trend-head .u { font-size: 10px; color: var(--text-dim); margin-left: 1px; }
+  .record-btn {
+    font-size: 9px; letter-spacing: 0.08em; font-weight: 600;
+    color: var(--text-dim); background: transparent;
+    border: 1px solid var(--line-strong); padding: 2px 7px;
+  }
+  .corner.front .record-btn:active,
+  .corner.front .record-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+  .corner.rear .record-btn:active,
+  .corner.rear .record-btn:hover { border-color: var(--magenta); color: var(--magenta); }
+
+  .trend-vals {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    margin-top: 4px; border: 1px solid var(--line);
+  }
+  .trend-vals .slot {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 4px 4px; border-right: 1px solid var(--line);
+  }
+  .trend-vals .slot:last-child { border-right: none; }
+  .trend-vals .slot-label { font-size: 9px; color: var(--text-dim); opacity: 0.7; letter-spacing: 0.06em; }
+  .trend-vals .slot.past .slot-value { font-size: 17px; color: var(--text-dim); font-weight: 500; margin-top: 1px; }
+  .trend-vals .slot.now { background: rgba(255,157,31,0.06); }
+  .trend-vals .slot.now .slot-label { color: var(--amber); opacity: 0.95; }
+  .trend-vals .slot.now .slot-value { font-size: 22px; color: var(--text); font-weight: 700; margin-top: 1px; }
+
+  .offset-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--line);
+  }
+  .offset-row .k { font-size: 10px; color: var(--text-dim); letter-spacing: 0.08em; opacity: 0.7; }
+  input.offset-input {
+    width: 58px; text-align: right;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--line-strong);
+    color: var(--text-dim); font-family: "SF Mono", "Menlo", monospace; font-size: 12px;
+    padding: 2px 5px;
+  }
+  input.offset-input:focus { outline: none; border-color: var(--amber); color: var(--text); }
+
+  .btnbar {
+    flex: 0 0 auto;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px;
+    background: var(--line);
+  }
+  button.cornerbtn {
+    padding: 14px 0; font-size: 13px; font-weight: 600; letter-spacing: 0.08em;
+    background: #0b0c0d; color: var(--text-dim); border: none;
+  }
+  button.cornerbtn.active { background: var(--amber); color: #1a0f00; }
+
+  @media (max-width: 500px) {
+    .stage {
+      grid-template-columns: 1fr;
+      grid-template-rows: none;
+      overflow-y: auto;
+    }
+    .trend-vals .slot.now .slot-value { font-size: 26px; }
+    .trend-vals .slot.past .slot-value { font-size: 16px; }
+    .logstrip { height: 44px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="status">
+  <span><span id="dot" class="dot"></span><span id="statusText">未接続</span></span>
+  <button id="connectBtn" onclick="connectBLE()" style="font-size:11px;padding:4px 10px;background:transparent;color:var(--amber);border:1px solid var(--amber);letter-spacing:0.08em">CONNECT</button>
+  <span><span id="clock"></span> <span style="opacity:0.5">build 0728-ble1</span></span>
+</div>
+
+<div class="stage" id="stage"></div>
+
+<div class="logstrip" id="logstrip"></div>
+
+<div class="btnbar" id="btnbar"></div>
+
+<script>
+const CORNER_IDS = ["FL", "FR", "RL", "RR"];
+const CORNER_CLASS = { FL: "front", FR: "front", RL: "rear", RR: "rear" };
+
+let state = {
+  corners: CORNER_IDS.map(id => ({
+    id,
+    raw_mm: null,
+    raw_history: [null, null, null], // [過去2, 過去1, 現在]
+    offset_mm: 0,
+    camber_history: [null, null, null] // [過去2, 過去1, 現在]
+  })),
+  camber_live: null, // Core2から届く単一のキャンバー生値
+  active_corner: -1
+};
+
+function buildStage() {
+  const stage = document.getElementById("stage");
+  stage.innerHTML = CORNER_IDS.map((id, idx) => `
+    <div class="corner ${CORNER_CLASS[id]}" id="corner${id}">
+      <div class="corner-label"><span>${id}</span><span class="live-tag">LIVE</span></div>
+
+      <div class="trend-row">
+        <div class="trend-head">
+          <span class="k">RIDE HEIGHT <span class="live-val num" id="raw${id}">--.-</span><span class="u">mm</span></span>
+          <button class="record-btn" onclick="recordHeight(${idx})">RECORD</button>
+        </div>
+        <div class="trend-vals">
+          <div class="slot past"><span class="slot-label">T-2</span><span class="slot-value num" id="h0${id}">--.-</span></div>
+          <div class="slot past"><span class="slot-label">T-1</span><span class="slot-value num" id="h1${id}">--.-</span></div>
+          <div class="slot now"><span class="slot-label">NOW</span><span class="slot-value num" id="h2${id}">--.-</span></div>
+        </div>
+      </div>
+
+      <div class="trend-row">
+        <div class="trend-head">
+          <span class="k">CAMBER <span class="live-val num" id="cbLive${id}">--.--</span><span class="u">deg</span></span>
+          <button class="record-btn" onclick="recordCamber(${idx})">RECORD</button>
+        </div>
+        <div class="trend-vals">
+          <div class="slot past"><span class="slot-label">T-2</span><span class="slot-value num" id="c0${id}">--.--</span></div>
+          <div class="slot past"><span class="slot-label">T-1</span><span class="slot-value num" id="c1${id}">--.--</span></div>
+          <div class="slot now"><span class="slot-label">NOW</span><span class="slot-value num" id="c2${id}">--.--</span></div>
+        </div>
+      </div>
+
+      <div class="offset-row"><span class="k">OFFSET</span><input class="offset-input num" id="off${id}" type="number" step="0.1"></div>
+    </div>
+  `).join("");
+
+  const btnbar = document.getElementById("btnbar");
+  btnbar.innerHTML = "";
+  CORNER_IDS.forEach((id, i) => {
+    const btn = document.createElement("button");
+    btn.className = "cornerbtn";
+    btn.id = "btn" + id;
+    btn.textContent = id;
+    btn.onclick = () => selectCorner(i);
+    btnbar.appendChild(btn);
+  });
+}
+
+const logEl = document.getElementById("logstrip");
+function log(tag, msg) {
+  const t = new Date();
+  const ts = String(t.getHours()).padStart(2, "0") + ":" + String(t.getMinutes()).padStart(2, "0") + ":" + String(t.getSeconds()).padStart(2, "0");
+  const div = document.createElement("div");
+  div.className = "entry";
+  div.innerHTML = `<span class="t">${ts}</span><span class="tag-${tag}">${msg}</span>`;
+  logEl.appendChild(div);
+  while (logEl.children.length > 100) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ===== GAS (Google Apps Script) 送信設定 =====
+// GASでWebアプリをデプロイした後、発行されたURLをここに貼り付けてください。
+// 例: https://script.google.com/macros/s/AKfycbx.../exec
+const GAS_URL = "https://script.google.com/macros/s/AKfycbwpxVupaQq4-4YsBa-5kkzU-N9ig3QvS9MBobpO6EFtUcGpEaHrj2TK1DyX3_HfCWCS_g/exec";
+
+const GAS_QUEUE_KEY = "gas_send_queue";
+
+function loadQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(GAS_QUEUE_KEY)) || [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveQueue(queue) {
+  localStorage.setItem(GAS_QUEUE_KEY, JSON.stringify(queue));
+}
+
+function queuePayload(payload) {
+  const queue = loadQueue();
+  queue.push(payload);
+  saveQueue(queue);
+}
+
+// GASはCORSのプリフライト(OPTIONS)に対応していないため、
+// Content-Type: text/plain + mode:no-cors で単純リクエストとして送信する。
+// no-corsではレスポンス内容は読めないため、送信成功=サーバ到達とみなす。
+// ネットワーク自体に繋がらない場合のみ catch に落ちる。
+function postToGAS(payload) {
+  return fetch(GAS_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain;charset=utf-8" },
+    body: JSON.stringify(payload),
+    keepalive: true
+  });
+}
+
+function sendToGAS(payload) {
+  if (!GAS_URL || GAS_URL === "PASTE_YOUR_GAS_WEBAPP_URL_HERE") {
+    log("gaserr", "GAS_URL未設定 (キューに保存)");
+    queuePayload(payload);
+    return;
+  }
+  postToGAS(payload)
+    .then(() => {
+      log("gas", `GAS送信 ${payload.type} ${payload.corner} ${payload.value}${payload.unit}`);
+    })
+    .catch((e) => {
+      log("gaserr", "GAS送信失敗、キューへ: " + e.message);
+      queuePayload(payload);
+    });
+}
+
+function flushQueue() {
+  if (!GAS_URL || GAS_URL === "PASTE_YOUR_GAS_WEBAPP_URL_HERE") return;
+  const queue = loadQueue();
+  if (queue.length === 0) return;
+  saveQueue([]); // 先にクリアし、失敗分だけ再キュー
+  log("gas", `キュー再送信 (${queue.length}件)`);
+  queue.forEach((payload) => {
+    postToGAS(payload).catch(() => queuePayload(payload));
+  });
+}
+
+function fmt(v, digits) {
+  if (v === null || v === undefined) return digits === 1 ? "--.-" : "--.--";
+  return v.toFixed(digits);
+}
+
+function calcFromRaw(raw, offset) {
+  return (raw === null || raw === undefined) ? null : raw - (offset ?? 0);
+}
+
+function render() {
+  state.corners.forEach((c, i) => {
+    const slots = ["h0", "h1", "h2"];
+    c.raw_history.forEach((rawVal, slotIdx) => {
+      document.getElementById(slots[slotIdx] + c.id).textContent = fmt(calcFromRaw(rawVal, c.offset_mm), 1);
+    });
+
+    document.getElementById("raw" + c.id).textContent = fmt(c.raw_mm, 1);
+
+    const isActive = (i === state.active_corner);
+    document.getElementById("cbLive" + c.id).textContent = isActive ? fmt(state.camber_live, 2) : "--.--";
+    const cSlots = ["c0", "c1", "c2"];
+    c.camber_history.forEach((camberVal, slotIdx) => {
+      document.getElementById(cSlots[slotIdx] + c.id).textContent = fmt(camberVal, 2);
+    });
+
+    document.getElementById("corner" + c.id).classList.toggle("active", isActive);
+
+    const offInput = document.getElementById("off" + c.id);
+    if (document.activeElement !== offInput) {
+      offInput.value = (c.offset_mm ?? 0).toFixed(1);
+    }
+  });
+
+  CORNER_IDS.forEach((id, i) => {
+    document.getElementById("btn" + id).classList.toggle("active", i === state.active_corner);
+  });
+}
+
+function pushRawHistory(cornerIndex, rawVal) {
+  const c = state.corners[cornerIndex];
+  c.raw_history.shift();
+  c.raw_history.push(rawVal);
+}
+
+function recordHeight(cornerIndex) {
+  const c = state.corners[cornerIndex];
+  pushRawHistory(cornerIndex, c.raw_mm);
+  const val = calcFromRaw(c.raw_mm, c.offset_mm);
+  log("sel", `RECORD ${CORNER_IDS[cornerIndex]} ${fmt(val, 1)}mm`);
+  sendToGAS({
+    type: "height",
+    corner: CORNER_IDS[cornerIndex],
+    value: val,
+    unit: "mm",
+    offset: c.offset_mm,
+    ts: new Date().toISOString()
+  });
+  render();
+}
+
+function recordCamber(cornerIndex) {
+  if (state.camber_live === null || state.camber_live === undefined) return;
+  const c = state.corners[cornerIndex];
+  c.camber_history.shift();
+  c.camber_history.push(state.camber_live);
+  log("sel", `RECORD ${CORNER_IDS[cornerIndex]} ${fmt(state.camber_live, 2)}deg`);
+  sendToGAS({
+    type: "camber",
+    corner: CORNER_IDS[cornerIndex],
+    value: state.camber_live,
+    unit: "deg",
+    offset: null,
+    ts: new Date().toISOString()
+  });
+  render();
+}
+
+function sendOffset(cornerIndex, value) {
+  const num = parseFloat(value);
+  if (isNaN(num)) return;
+  state.corners[cornerIndex].offset_mm = num;
+  localStorage.setItem("offset_" + CORNER_IDS[cornerIndex], String(num));
+  log("off", `OFFSET ${CORNER_IDS[cornerIndex]} = ${num.toFixed(1)}mm`);
+  render();
+}
+
+function selectCorner(i) {
+  state.active_corner = i;
+  render();
+  log("sel", `SELECT ${CORNER_IDS[i]}`);
+}
+
+const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const CHARACTERISTIC_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+let bleDevice = null;
+let bleChar = null;
+
+async function connectBLE() {
+  try {
+    log("conn", "REQUEST DEVICE...");
+    bleDevice = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [SERVICE_UUID] }]
+    });
+    bleDevice.addEventListener("gattserverdisconnected", onBleDisconnected);
+
+    const server = await bleDevice.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE_UUID);
+    bleChar = await service.getCharacteristic(CHARACTERISTIC_UUID);
+    await bleChar.startNotifications();
+    bleChar.addEventListener("characteristicvaluechanged", onBleData);
+
+    document.getElementById("dot").classList.add("connected");
+    document.getElementById("statusText").textContent = "接続中";
+    document.getElementById("connectBtn").textContent = "CONNECTED";
+    log("conn", "LINK UP");
+    flushQueue();
+  } catch (e) {
+    console.error(e);
+    log("conn", "CONNECT FAILED: " + e.message);
+  }
+}
+
+function onBleDisconnected() {
+  document.getElementById("dot").classList.remove("connected");
+  document.getElementById("statusText").textContent = "切断";
+  document.getElementById("connectBtn").textContent = "CONNECT";
+  log("conn", "LINK LOST");
+}
+
+function onBleData(event) {
+  try {
+    const text = new TextDecoder().decode(event.target.value);
+    const data = JSON.parse(text);
+    if (data.h) {
+      data.h.forEach((raw, i) => { state.corners[i].raw_mm = raw; });
+    }
+    if (typeof data.c === "number") state.camber_live = data.c;
+    render();
+  } catch (e) { console.error("bad ble message", e); }
+}
+
+function heartbeatLog() {
+  const parts = state.corners.map(c => `${c.id} ${fmt(c.raw_mm, 1)}mm`).join("  ");
+  log("conn", parts);
+}
+
+function tickClock() {
+  const now = new Date();
+  document.getElementById("clock").textContent =
+    String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
+}
+
+buildStage();
+
+CORNER_IDS.forEach((id, i) => {
+  const saved = localStorage.getItem("offset_" + id);
+  if (saved !== null) state.corners[i].offset_mm = parseFloat(saved);
+  document.getElementById("off" + id).addEventListener("change", (e) => sendOffset(i, e.target.value));
+});
+
+render();
+tickClock();
+setInterval(tickClock, 1000 * 10);
+setInterval(heartbeatLog, 1000 * 5);
+
+flushQueue();
+window.addEventListener("online", () => { log("gas", "オンライン復帰、キュー送信"); flushQueue(); });
+setInterval(flushQueue, 1000 * 30);
+</script>
+
+</body>
+</html>
