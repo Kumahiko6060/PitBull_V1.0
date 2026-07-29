@@ -174,6 +174,7 @@
 <div class="status">
   <span><span id="dot" class="dot"></span><span id="statusText">未接続</span></span>
   <button id="connectBtn" onclick="connectBLE()" style="font-size:11px;padding:4px 10px;background:transparent;color:var(--amber);border:1px solid var(--amber);letter-spacing:0.08em">CONNECT</button>
+  <button id="sendBtn" onclick="manualSend()" style="font-size:11px;padding:4px 10px;background:transparent;color:var(--cyan);border:1px solid var(--cyan);letter-spacing:0.08em">SEND</button>
   <span><span id="clock"></span> <span style="opacity:0.5">build 0728-ble1</span></span>
 </div>
 
@@ -262,7 +263,7 @@ function log(tag, msg) {
 // 例: https://script.google.com/macros/s/AKfycbx.../exec
 const GAS_URL = "https://script.google.com/macros/s/AKfycbwpxVupaQq4-4YsBa-5kkzU-N9ig3QvS9MBobpO6EFtUcGpEaHrj2TK1DyX3_HfCWCS_g/exec";
 
-const GAS_QUEUE_KEY = "gas_send_queue";
+const GAS_QUEUE_KEY = "gas_send_queue"; // 送信に失敗したスナップショットの再送待ちキュー
 
 function loadQueue() {
   try {
@@ -276,50 +277,83 @@ function saveQueue(queue) {
   localStorage.setItem(GAS_QUEUE_KEY, JSON.stringify(queue));
 }
 
-function queuePayload(payload) {
+function queueSnapshot(snapshot) {
   const queue = loadQueue();
-  queue.push(payload);
+  queue.push(snapshot);
   saveQueue(queue);
+  updateSendBtn();
 }
 
 // GASはCORSのプリフライト(OPTIONS)に対応していないため、
 // Content-Type: text/plain + mode:no-cors で単純リクエストとして送信する。
 // no-corsではレスポンス内容は読めないため、送信成功=サーバ到達とみなす。
 // ネットワーク自体に繋がらない場合のみ catch に落ちる。
-function postToGAS(payload) {
+function postToGAS(snapshot) {
   return fetch(GAS_URL, {
     method: "POST",
     mode: "no-cors",
     headers: { "Content-Type": "text/plain;charset=utf-8" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(snapshot),
     keepalive: true
   });
 }
 
-function sendToGAS(payload) {
-  if (!GAS_URL || GAS_URL === "PASTE_YOUR_GAS_WEBAPP_URL_HERE") {
-    log("gaserr", "GAS_URL未設定 (キューに保存)");
-    queuePayload(payload);
-    return;
-  }
-  postToGAS(payload)
-    .then(() => {
-      log("gas", `GAS送信 ${payload.type} ${payload.corner} ${payload.value}${payload.unit}`);
-    })
-    .catch((e) => {
-      log("gaserr", "GAS送信失敗、キューへ: " + e.message);
-      queuePayload(payload);
-    });
+// SENDボタンの表示に、再送待ち(失敗)件数を出す
+function updateSendBtn() {
+  const btn = document.getElementById("sendBtn");
+  if (!btn) return;
+  const n = loadQueue().length;
+  btn.textContent = n > 0 ? `SEND (${n}件再送待ち)` : "SEND";
 }
 
-function flushQueue() {
-  if (!GAS_URL || GAS_URL === "PASTE_YOUR_GAS_WEBAPP_URL_HERE") return;
-  const queue = loadQueue();
-  if (queue.length === 0) return;
+// ダッシュボードに表示されている「NOW」値(車高・キャンバーとも)を
+// コーナーごとに分割した配列として作る (シート側では1コーナー=1行になる)
+function buildNowSnapshot() {
+  const corners = state.corners.map((c) => {
+    const heightNow = calcFromRaw(c.raw_history[2], c.offset_mm);
+    const camberNow = c.camber_history[2];
+    return {
+      corner: c.id,
+      height_mm: (heightNow === null || heightNow === undefined) ? "" : Number(heightNow.toFixed(1)),
+      camber_deg: (camberNow === null || camberNow === undefined) ? "" : Number(camberNow.toFixed(2))
+    };
+  });
+  return { ts: new Date().toISOString(), corners };
+}
+
+function hasAnySnapshotValue(snap) {
+  return snap.corners.some((c) => c.height_mm !== "" || c.camber_deg !== "");
+}
+
+// SENDボタン押下時のみ発火。現在のNOWスナップショット1行 + 再送待ち分をまとめて送る。
+function manualSend() {
+  if (!GAS_URL || GAS_URL === "PASTE_YOUR_GAS_WEBAPP_URL_HERE") {
+    log("gaserr", "GAS_URL未設定");
+    return;
+  }
+
+  const snapshot = buildNowSnapshot();
+  const pending = loadQueue();
+  const toSend = hasAnySnapshotValue(snapshot) ? [...pending, snapshot] : [...pending];
+
+  if (toSend.length === 0) {
+    log("gas", "送信できるNOW値がありません");
+    return;
+  }
+
   saveQueue([]); // 先にクリアし、失敗分だけ再キュー
-  log("gas", `キュー再送信 (${queue.length}件)`);
-  queue.forEach((payload) => {
-    postToGAS(payload).catch(() => queuePayload(payload));
+  updateSendBtn();
+  log("gas", `NOWスナップショット送信 (${toSend.length}件)`);
+
+  toSend.forEach((snap) => {
+    postToGAS(snap)
+      .then(() => {
+        log("gas", `GAS送信OK ${snap.ts}`);
+      })
+      .catch((e) => {
+        log("gaserr", "GAS送信失敗、再送キューへ: " + e.message);
+        queueSnapshot(snap);
+      });
   });
 }
 
@@ -372,14 +406,6 @@ function recordHeight(cornerIndex) {
   pushRawHistory(cornerIndex, c.raw_mm);
   const val = calcFromRaw(c.raw_mm, c.offset_mm);
   log("sel", `RECORD ${CORNER_IDS[cornerIndex]} ${fmt(val, 1)}mm`);
-  sendToGAS({
-    type: "height",
-    corner: CORNER_IDS[cornerIndex],
-    value: val,
-    unit: "mm",
-    offset: c.offset_mm,
-    ts: new Date().toISOString()
-  });
   render();
 }
 
@@ -389,14 +415,6 @@ function recordCamber(cornerIndex) {
   c.camber_history.shift();
   c.camber_history.push(state.camber_live);
   log("sel", `RECORD ${CORNER_IDS[cornerIndex]} ${fmt(state.camber_live, 2)}deg`);
-  sendToGAS({
-    type: "camber",
-    corner: CORNER_IDS[cornerIndex],
-    value: state.camber_live,
-    unit: "deg",
-    offset: null,
-    ts: new Date().toISOString()
-  });
   render();
 }
 
@@ -439,7 +457,6 @@ async function connectBLE() {
     document.getElementById("statusText").textContent = "接続中";
     document.getElementById("connectBtn").textContent = "CONNECTED";
     log("conn", "LINK UP");
-    flushQueue();
   } catch (e) {
     console.error(e);
     log("conn", "CONNECT FAILED: " + e.message);
@@ -489,9 +506,7 @@ tickClock();
 setInterval(tickClock, 1000 * 10);
 setInterval(heartbeatLog, 1000 * 5);
 
-flushQueue();
-window.addEventListener("online", () => { log("gas", "オンライン復帰、キュー送信"); flushQueue(); });
-setInterval(flushQueue, 1000 * 30);
+updateSendBtn();
 </script>
 
 </body>
